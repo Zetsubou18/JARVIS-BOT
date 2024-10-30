@@ -1,0 +1,177 @@
+import telebot
+import g4f
+import datetime
+import threading
+
+# Инициализация бота
+API_TOKEN = 'ТУТ ТОКЕН'  # Токен бота
+bot = telebot.TeleBot(API_TOKEN)
+
+#переменные для истории и память
+
+conversation_history = {}
+subscriptions = {}
+gpt_enabled = {}
+
+MAX_MESSAGE_LENGTH = 4096 # ограничения на сообщения
+
+#функция для проверки на длинну сообщения
+def trim_history(history, max_length=MAX_MESSAGE_LENGTH):
+    current_length = sum(len(message["content"]) for message in history)
+    while history and current_length > max_length:
+        removed_message = history.pop(0)
+        current_length -= len(removed_message["content"])
+    return history
+
+
+def load_subscriptions():
+#скрытый код
+
+#скрипт для проверки подписки
+def check_subscription(user_id):
+    if user_id not in subscriptions:
+        return None
+    expiration_date = subscriptions[user_id]
+    if datetime.datetime.now() > expiration_date:
+        del subscriptions[user_id]  # Удаляем истекшую подписку
+        return None
+    return expiration_date
+
+
+def load_promocodes():
+#скрытый код
+
+#4 функции для проверок и активаций подписок и промокодов
+def write_subscription(user_id, duration):
+    expiration = datetime.datetime.now() + duration
+    subscriptions[user_id] = expiration
+    with open('vip.txt', 'a') as f:
+        f.write(f'{user_id},{expiration.isoformat()}\n')
+
+
+def log_used_promo_code(user_id, promo_code):
+    with open('users.txt', 'a') as f:
+        f.write(f'{promo_code},{user_id}\n')
+
+
+def is_promo_code_used(promo_code, user_id):
+    try:
+        with open('users.txt', 'r') as f:
+            for line in f:
+                code, uid = line.strip().split(',')
+                if code == promo_code and int(uid) == user_id:
+                    return True
+    except FileNotFoundError:
+        return False
+    return False
+
+
+def log_user_input(user_id, user_input):
+    with open('log.txt', 'a') as f:
+        f.write(f'{datetime.datetime.now()}: User ID {user_id} - Input: {user_input}\n')
+
+#кнопки бота
+@bot.message_handler(commands=['start'])
+def send_buttons(message):
+    markup = telebot.types.ReplyKeyboardMarkup(row_width=2)
+    markup.add(
+        *[telebot.types.KeyboardButton(text) for text in ['Запустить GPT', 'Остановить GPT', 'Подписка', 'Промокод']])
+    bot.send_message(message.chat.id, 'Выберите действие:', reply_markup=markup)
+
+#действия кнопок
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    user_id = message.from_user.id
+    user_input = message.text
+
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
+
+    if user_id not in gpt_enabled:
+        gpt_enabled[user_id] = False
+
+    log_user_input(user_id, user_input)
+    conversation_history[user_id].append({"role": "user", "content": user_input})
+    conversation_history[user_id] = trim_history(conversation_history[user_id])
+
+    if user_input == "Запустить GPT":
+        if check_subscription(user_id):
+            gpt_enabled[user_id] = True
+            bot.send_message(message.chat.id, "GPT включен.")
+        else:
+            bot.send_message(message.chat.id, "У вас нет подписки😢.")
+    elif user_input == "Остановить GPT":
+        gpt_enabled[user_id] = False
+        bot.send_message(message.chat.id, "GPT остановлен.")
+    elif user_input == "Подписка":
+        expiration = check_subscription(user_id)
+        if expiration:
+            remaining_time = expiration - datetime.datetime.now()
+            bot.send_message(message.chat.id, f"Ваша подписка активна. \nОсталось времени: {remaining_time}")
+        else:
+            bot.send_message(message.chat.id,
+                             "У вас нет подписки. Вы можете приобрести её у админа @Proger18 \nТарифы: \n299р - месяц \n499р - 2 месяца \n750р - полгода \n1320р - год")
+    elif user_input == "Промокод":
+        bot.send_message(message.chat.id, "Введите промокод, который вам выдали. Или нажмите на другую кнопку.")
+        bot.register_next_step_handler(message, process_promo_code)
+
+    if gpt_enabled[user_id]:
+        thread = threading.Thread(target=gpt_response, args=(user_id, message.chat.id))
+        thread.start()
+
+#остановка нейросетки при истечении подписки
+def gpt_response(user_id, chat_id):
+    if not check_subscription(user_id):  # Проверка на наличие подписки
+        gpt_enabled[user_id] = False
+        bot.send_message(chat_id, "Ваша подписка истекла. GPT остановлен.")
+        return
+
+    chat_history = conversation_history[user_id]
+    try:
+        response = g4f.ChatCompletion.create(
+            model=g4f.models.default,
+            messages=chat_history,
+            provider=g4f.Provider.Blackbox,
+        )
+        chat_gpt_response = response
+
+    except Exception as e:
+        chat_gpt_response = "Извините, произошла ошибка🤨."
+
+    while len(chat_gpt_response) > MAX_MESSAGE_LENGTH:
+        part = chat_gpt_response[:MAX_MESSAGE_LENGTH - 1] + "…"
+        bot.send_message(chat_id, part)
+        chat_gpt_response = chat_gpt_response[MAX_MESSAGE_LENGTH - 1:]
+
+    if chat_gpt_response:
+        bot.send_message(chat_id, chat_gpt_response)
+        conversation_history[user_id].append({"role": "assistant", "content": chat_gpt_response})
+
+
+def process_promo_code(message):
+#скрытый код
+
+
+def is_promo_code_used(promo_code, user_id):
+    try:
+        with open('users.txt', 'r') as f:
+            for line in f:
+                line = line.strip()  # Удаляем пробелы и символы новой строки
+                if not line:  # Игнорируем пустые строки
+                    continue
+                try:
+                    code, uid = line.split(',')
+                    if code == promo_code and int(uid) == user_id:
+                        return True
+                except ValueError:
+                    continue  # Игнорируем строки, не соответствующие формату
+    except FileNotFoundError:
+        return False
+    return False
+
+
+# Загружаем подписки при старте бота
+load_subscriptions()
+
+# Запуск бота
+bot.polling()
